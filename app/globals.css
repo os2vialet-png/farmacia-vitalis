@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+/* Paleta Farmacia Vitalis: blanco de limpio, verde de salud y rojo de urgencia. */
+:root {
+  --vitalis-white: #ffffff;
+  --vitalis-bg: #f6f8f7;
+  --vitalis-green: #00a651;
+  --vitalis-green-dark: #007a3d;
+  --vitalis-green-soft: #e9f8f0;
+  --vitalis-red: #e63946;
+  --vitalis-red-dark: #c22833;
+  --vitalis-red-soft: #fdecee;
+  --vitalis-ink: #1f2d27;
+  --vitalis-muted: #5d6d64;
+  --vitalis-line: #e3e9e5;
+  --background: var(--vitalis-bg);
+  --foreground: var(--vitalis-ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-vitalis-green: var(--vitalis-green);
+  --color-vitalis-green-dark: var(--vitalis-green-dark);
+  --color-vitalis-green-soft: var(--vitalis-green-soft);
+  --color-vitalis-red: var(--vitalis-red);
+  --color-vitalis-red-soft: var(--vitalis-red-soft);
+  --color-vitalis-ink: var(--vitalis-ink);
+  --color-vitalis-muted: var(--vitalis-muted);
+  --color-vitalis-line: var(--vitalis-line);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Cinta superior: franja tricolor de farmacia (blanco, verde, rojo). */
+.vitalis-strip {
+  height: 5px;
+  background: linear-gradient(
+    to right,
+    var(--vitalis-green) 0%,
+    var(--vitalis-green) 55%,
+    var(--vitalis-white) 55%,
+    var(--vitalis-white) 58%,
+    var(--vitalis-red) 58%,
+    var(--vitalis-red) 100%
+  );
+}
+
+/* Título de sección con barra farmacéutica. */
+.vitalis-heading {
+  position: relative;
+  padding-left: 0.75rem;
+}
+.vitalis-heading::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.2rem;
+  bottom: 0.2rem;
+  width: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(var(--vitalis-green), var(--vitalis-red));
+}
+
+::selection {
+  background: rgba(0, 166, 81, 0.18);
+}

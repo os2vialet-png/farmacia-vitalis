@@ -1,0 +1,42 @@
+{
+  "name": "farmacia-inteligente",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:dry": "tsx scripts/migrate.ts --dry-run",
+    "catalog:quality": "tsx scripts/catalog/quality.ts",
+    "owner:reset-password": "tsx --env-file=.env.local scripts/reset-owner-password.ts",
+    "test:unit": "tsx --test scripts/qa/unit.test.ts",
+    "qa:setup": "tsx scripts/qa/setup.ts",
+    "qa:teardown": "tsx scripts/qa/teardown.ts",
+    "test:api": "tsx scripts/qa/run-tests.ts",
+    "test:pages": "tsx scripts/qa/pages.ts"
+  },
+  "dependencies": {
+    "csv-parse": "^7.0.3",
+    "next": "16.4.5",
+    "pg": "^8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.5",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}
