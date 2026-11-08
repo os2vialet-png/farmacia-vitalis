@@ -89,6 +89,24 @@ La IA solo traduce tu frase a una de las órdenes de la tabla. Nunca toca la bas
 
 Cada producto muestra su foto si se cargó una (por URL o subida desde Catálogo → Editar). Si no tiene foto, muestra un ícono según su forma farmacéutica (tableta, cápsula, jarabe, inyectable, crema, gotas, supositorio, inhalador o polvo) y su vía de uso (oral, inyectable, tópica, rectal o inhalada). No se descargan fotos de internet automáticamente: en medicamentos, una foto equivocada es peligrosa y la mayoría tiene derechos de autor.
 
+### Botón flotante del asistente
+
+En todas las pantallas, el propietario y los administradores ven un botón verde abajo a la derecha. Al pulsarlo se abre el asistente con los avisos del negocio, sin salir de la pantalla en la que estás.
+
+### Datos de demostración
+
+Para ver el sistema funcionando hay datos de ejemplo cargados por la API real: 4 productos «(DEMO)» verificados con precio en las 2 sucursales, 2 suplidores, 2 compras recibidas (un lote vence en 20 días), 2 clientes, 4 ventas (una anulada), 2 transferencias (una recibida y una pendiente), 2 empleados y un mínimo de reposición que genera una alerta.
+
+```bash
+npx tsx scripts/demo/seed-demo.ts
+```
+
+```bash
+npx tsx scripts/demo/remove-demo.ts --confirm
+```
+
+El primero los carga (con la aplicación corriendo en el puerto 3100). El segundo los borra cuando empieces a operar de verdad; sin `--confirm` solo muestra qué borraría.
+
 ### Sucursal de demostración
 
 `Farmacia Vitalis - Santiago (demo)` (código `VITALIS-002`) tiene dirección y teléfono ficticios. Se crea con `npx tsx scripts/demo/create-demo-branch.ts`. Para retirarla, desactívala.

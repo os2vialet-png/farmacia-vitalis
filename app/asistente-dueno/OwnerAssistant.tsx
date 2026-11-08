@@ -24,10 +24,13 @@ export default function OwnerAssistant({
   firstName,
   initialReply,
   initialBullets,
+  compact = false,
 }: {
   firstName: string;
   initialReply: string;
   initialBullets: string[];
+  /** Versión reducida para el panel flotante. */
+  compact?: boolean;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     { role: "bot", text: `Hola, ${firstName}. ${initialReply}`, bullets: initialBullets },
@@ -94,8 +97,8 @@ export default function OwnerAssistant({
   }
 
   return (
-    <section className="flex flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="max-h-[60vh] min-h-[360px] space-y-3 overflow-y-auto p-4" aria-live="polite">
+    <section className={`flex flex-col bg-white ${compact ? "" : "rounded-xl border border-gray-200 shadow-sm"}`}>
+      <div className={`${compact ? "max-h-[48vh] min-h-[240px]" : "max-h-[60vh] min-h-[360px]"} space-y-3 overflow-y-auto p-4`} aria-live="polite">
         {messages.map((message, index) => (
           <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
             <div className={`inline-block max-w-[92%] rounded-lg px-3 py-2 text-left text-sm ${message.role === "user" ? "bg-green-700 text-white" : "bg-gray-100 text-gray-900"}`}>

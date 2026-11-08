@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import LogoutButton from "./LogoutButton";
+import FloatingAssistant from "./FloatingAssistant";
 import { navigationFor, roleLabelFor, type NavSession, type NavItem } from "@/src/lib/navigation";
 
 type Props = {
@@ -49,6 +50,9 @@ export function PharmacyCross({ className = "h-10 w-10" }: { className?: string 
 export default function AppShell({ children, session, activeItem }: Props) {
   const navigation = navigationFor(session);
   const currentUser = `${session.user.firstName} ${session.user.lastName}`;
+  // Botón flotante del asistente: propietario y administradores, excepto en su propia pantalla.
+  const showAssistant =
+    activeItem !== "owner-assistant" && session.roles.some((role) => role.permissions.includes("users.view"));
 
   return (
     <div className="min-h-screen bg-[var(--vitalis-bg)] text-[var(--vitalis-ink)] md:flex">
@@ -107,6 +111,7 @@ export default function AppShell({ children, session, activeItem }: Props) {
         </header>
         {children}
       </div>
+      {showAssistant && <FloatingAssistant firstName={session.user.firstName} />}
     </div>
   );
 }
