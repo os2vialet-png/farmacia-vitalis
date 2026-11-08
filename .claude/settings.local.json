@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(node -e 'const d=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(\"backups/qa-accounts.json\",\"utf8\"\\)\\); process.stdout.write\\(d.accounts.find\\(a=>a.username===\"qa_owner\"\\).password + \" \" + d.branches.b2\\)')"
-    ]
-  }
-}

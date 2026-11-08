@@ -45,3 +45,6 @@ next-env.d.ts
 
 # instaladores ajenos al proyecto (no se suben)
 database/imports/*.exe
+
+# configuración local de Claude Code
+.claude/settings.local.json

@@ -241,7 +241,8 @@ export default async function DashboardPage() {
   const salesMap = new Map(salesWeek.rows.map((row) => [row.day, row]));
   const weekData = Array.from({ length: 7 }, (_, index) => {
     const day = localISO(index - 6);
-    const date = new Date(Date.now() + (index - 6) * 24 * 60 * 60 * 1000);
+    // Mediodía UTC del mismo día local: la etiqueta sale del día ya calculado, sin leer el reloj otra vez.
+    const date = new Date(`${day}T12:00:00Z`);
     const label = new Intl.DateTimeFormat("es-DO", { timeZone: REPORT_TZ, weekday: "short" }).format(date).replace(".", "");
     const found = salesMap.get(day);
     return { day, label, amount: found?.amount ?? 0, count: found?.n ?? 0 };

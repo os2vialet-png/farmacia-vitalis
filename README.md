@@ -41,6 +41,7 @@ La guía completa está en [docs/INSTALACION.md](docs/INSTALACION.md).
 - [Uso por módulo](docs/USO.md)
 - [Mantenimiento y operación](docs/MANTENIMIENTO.md)
 - [Pruebas](docs/PRUEBAS.md)
+- [Presentación: qué es, objetivo, misión, visión, uso, web y otros dispositivos](docs/PRESENTACION.md)
 - [Estado del proyecto: completado, pendiente y pruebas realizadas](docs/ESTADO.md)
 
 ## Comandos
