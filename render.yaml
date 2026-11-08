@@ -1,0 +1,19 @@
+# Publicación gratuita en Render (https://render.com). La base de datos está en Neon.
+# Las claves (sync: false) se escriben en el panel de Render; nunca van en este archivo.
+services:
+  - type: web
+    name: farmacia-vitalis
+    runtime: node
+    plan: free
+    region: virginia
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false
+      - key: AI_API_KEY
+        sync: false
