@@ -29,6 +29,29 @@ export function productIconCategory(dosageForm: string | null | undefined): Prod
   return "otro";
 }
 
+/** Vía de uso derivada de la forma farmacéutica registrada. null si la forma no la indica. */
+export function usageLabel(dosageForm: string | null | undefined): string | null {
+  switch (productIconCategory(dosageForm)) {
+    case "tableta":
+    case "capsula":
+    case "liquido":
+    case "polvo":
+      return "Vía oral";
+    case "inyectable":
+      return "Inyectable";
+    case "topico":
+      return "Uso tópico";
+    case "gotas":
+      return "Gotas";
+    case "supositorio":
+      return "Vía rectal";
+    case "inhalador":
+      return "Vía inhalada";
+    default:
+      return null;
+  }
+}
+
 export function productIconLabel(category: ProductIconCategory): string {
   switch (category) {
     case "tableta": return "tabletas o comprimidos";

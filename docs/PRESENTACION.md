@@ -40,6 +40,29 @@ Ser la plataforma con la que Farmacia Vitalis crezca de una a muchas sucursales 
 | Propietario y gerentes | Consultan ventas, rentabilidad, vencimientos y desempeño | Reportes |
 | Clientes | Preguntan si hay un producto y su precio | `/asistente` (público) |
 
+### Asistente del dueño (`/asistente-dueno`, propietario y administradores)
+
+Escribe órdenes en español. El asistente muestra qué va a hacer y **solo actúa cuando pulsas Confirmar**. Al ejecutar vuelve a validar los permisos, y todo queda en auditoría.
+
+| Escribe | Qué hace |
+|---|---|
+| `avisos` | Resumen: ventas de hoy, stock bajo, lotes por vencer o vencidos, transferencias pendientes, productos sin verificar o sin precio, empleados con contraseña temporal |
+| `crea un vendedor llamado Ana Gómez en Villa Mella` | Crea el empleado con contraseña temporal (roles: vendedor, farmacéutico, encargado de inventario, administrador; opcional `usuario agomez`) |
+| `desactiva al usuario agomez` | Desactiva al empleado y cierra sus sesiones |
+| `agrega el medicamento Amoxil forma cápsula concentración 500 mg presentación caja x 21 unidad caja marca GSK` | Crea el producto pendiente de verificación |
+| `pon el precio de amoxil a 150 en Villa Mella` | Fija el precio en esa sucursal |
+| `cambia el pie del comprobante a Gracias por preferirnos` | Cambia la configuración (también nombre de la farmacia y derivación clínica) |
+
+Interpreta las órdenes con reglas, sin servicios de pago. Puede conectarse a un modelo de IA (por ejemplo Claude) para entender frases más libres, pero eso requiere una clave de API con costo por uso.
+
+### Íconos y fotos de productos
+
+Cada producto muestra su foto si se cargó una (por URL o subida desde Catálogo → Editar). Si no tiene foto, muestra un ícono según su forma farmacéutica (tableta, cápsula, jarabe, inyectable, crema, gotas, supositorio, inhalador o polvo) y su vía de uso (oral, inyectable, tópica, rectal o inhalada). No se descargan fotos de internet automáticamente: en medicamentos, una foto equivocada es peligrosa y la mayoría tiene derechos de autor.
+
+### Sucursal de demostración
+
+`Farmacia Vitalis - Santiago (demo)` (código `VITALIS-002`) tiene dirección y teléfono ficticios. Se crea con `npx tsx scripts/demo/create-demo-branch.ts`. Para retirarla, desactívala.
+
 **Orden para empezar a vender:** crear empleados → completar y verificar productos → fijar precios → registrar una compra y recibirla → vender en el POS. El detalle de cada pantalla está en [USO.md](USO.md).
 
 ## Conexión con PostgreSQL

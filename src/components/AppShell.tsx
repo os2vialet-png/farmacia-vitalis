@@ -12,6 +12,7 @@ type Props = {
 const MODULE_ICONS: Record<string, ReactNode> = {
   dashboard: <path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1v-8.5Z" />,
   pos: <path d="M3 5h18l-2 7H5L3 5Zm2 9h14l-1 5H6l-1-5Zm5-2h6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,
+  "owner-assistant": <path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8L12 3Zm6 11 .9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />,
   sales: <path d="M4 19h16M5 16c2-1 4-5 7-8s5-2 7-4M6 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />,
   customers: <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm-8 8a8 8 0 0 1 16 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />,
   purchases: <path d="M5 8h14l-1 11H6L5 8Zm4 0a3 3 0 0 1 6 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />,

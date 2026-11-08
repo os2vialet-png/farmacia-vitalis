@@ -4,6 +4,7 @@ import { db } from "@/src/lib/db";
 import { requirePagePermission } from "@/src/lib/auth/page-guard";
 import AppShell from "@/src/components/AppShell";
 import ProductImage from "@/src/components/ProductImage";
+import NewProductForm from "./NewProductForm";
 
 
 const FILTERS = {
@@ -27,6 +28,7 @@ export default async function CatalogPage({
   searchParams: Promise<{ q?: string; filter?: string }>;
 }) {
   const session = await requirePagePermission("catalog.view");
+  const canCreate = session.roles.some((role) => role.permissions.includes("catalog.create"));
   const params = await searchParams;
   const term = (params.q ?? "").trim().slice(0, 80);
   const filter: FilterKey = params.filter && params.filter in FILTERS ? (params.filter as FilterKey) : "all";
@@ -104,6 +106,8 @@ export default async function CatalogPage({
             Un producto se puede vender solo si está activo, verificado, con unidad de venta y precio en la sucursal.
           </p>
         </div>
+
+        {canCreate && <NewProductForm />}
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
           {[

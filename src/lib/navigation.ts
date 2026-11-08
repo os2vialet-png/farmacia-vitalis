@@ -19,6 +19,7 @@ type NavDefinition = NavItem & {
 
 const DEFINITIONS: NavDefinition[] = [
   { id: "dashboard", label: "Inicio", href: "/dashboard" },
+  { id: "owner-assistant", label: "Asistente del dueño", href: "/asistente-dueno", permission: "users.view" },
   { id: "pos", label: "Punto de venta", href: "/pos", permission: "sales.create" },
   { id: "sales", label: "Historial de ventas", href: "/ventas", permission: "sales.view" },
   { id: "customers", label: "Clientes", href: "/clientes", permission: "customers.view" },

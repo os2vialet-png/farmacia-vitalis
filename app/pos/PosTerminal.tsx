@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import ProductImage from "@/src/components/ProductImage";
+import { usageLabel } from "@/src/lib/product-image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Branch = { id: string; name: string };
@@ -371,34 +373,14 @@ export default function PosTerminal({
                     className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-green-50"
                   >
                     <span className="flex min-w-0 items-center gap-3">
-                      {product.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- imágenes subidas por la farmacia, tamaño fijo de miniatura
-                        <img
-                          src={product.imageUrl}
-                          alt=""
-                          width={44}
-                          height={44}
-                          loading="lazy"
-                          className="h-11 w-11 shrink-0 rounded-lg border border-gray-200 bg-white object-contain"
-                        />
-                      ) : (
-                        <span
-                          aria-hidden="true"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-green-50 text-green-700"
-                        >
-                          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                            <rect x="3" y="8" width="18" height="8" rx="4" transform="rotate(-35 12 12)" />
-                            <path d="M9.5 8.5l5 7" />
-                          </svg>
-                        </span>
-                      )}
+                      <ProductImage name={product.productName} dosageForm={product.dosageForm} imageUrl={product.imageUrl} size="sm" />
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-medium text-gray-900">{product.productName}</span>
                         <span className="block text-xs font-semibold text-green-800">
                           {product.brandName ? `Marca: ${product.brandName}` : "Marca no registrada"}
                         </span>
                         <span className="block text-xs text-gray-500">
-                          {[product.presentation, `Unidad: ${product.saleUnit}`].filter(Boolean).join(" · ")}
+                          {[usageLabel(product.dosageForm), product.presentation, `Unidad: ${product.saleUnit}`].filter(Boolean).join(" · ")}
                         </span>
                       </span>
                     </span>

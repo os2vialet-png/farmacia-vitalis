@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
       id: string;
       product_name: string;
       brand_name: string | null;
+      dosage_form: string | null;
       presentation: string | null;
       sale_unit: string;
       tax_rate: string | null;
@@ -112,6 +113,7 @@ export async function GET(request: NextRequest) {
         productName: row.product_name,
         brandName: row.brand_name,
         imageUrl: row.image_url,
+        dosageForm: row.dosage_form,
         presentation: row.presentation,
         saleUnit: row.sale_unit,
         taxRate: row.tax_rate === null ? 0 : Number(row.tax_rate),
