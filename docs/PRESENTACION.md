@@ -53,7 +53,27 @@ Escribe órdenes en español. El asistente muestra qué va a hacer y **solo act�
 | `pon el precio de amoxil a 150 en Villa Mella` | Fija el precio en esa sucursal |
 | `cambia el pie del comprobante a Gracias por preferirnos` | Cambia la configuración (también nombre de la farmacia y derivación clínica) |
 
-Interpreta las órdenes con reglas, sin servicios de pago. Puede conectarse a un modelo de IA (por ejemplo Claude) para entender frases más libres, pero eso requiere una clave de API con costo por uso.
+| `stock bajo` · `por vencer` · `ventas de la semana` · `cuánto hay de amoxil` | Consultas directas al inventario y a las ventas en PostgreSQL |
+| `pon el mínimo de amoxil a 20 en Villa Mella` | Fija el mínimo y el punto de reposición; desde ahí aparece en «avisos» y «stock bajo» |
+| `deshacer` | Revierte tu última acción del asistente: reactiva o desactiva empleados, restaura el precio, el mínimo o la configuración anterior, o desactiva el producto creado |
+
+Al abrir la pantalla, el asistente muestra los avisos del negocio sin que haya que pedirlos.
+
+#### IA gratuita (opcional, en tu propia computadora)
+
+Sin instalar nada, el asistente entiende las órdenes de la tabla. Para que entienda frases libres ("¿qué tengo que pedir esta semana?"), instala **Ollama**. Es gratis, corre en tu PC y los datos de la farmacia no salen de ella.
+
+```bash
+winget install Ollama.Ollama
+```
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+Agrega a `.env.local` la línea `OLLAMA_MODEL=qwen2.5:7b` y reinicia la aplicación. La pantalla mostrará «IA local activa».
+
+La IA solo traduce tu frase a una de las órdenes de la tabla. Nunca toca la base de datos: la orden pasa por las mismas validaciones, permisos y confirmación. Si Ollama está apagado, el asistente sigue funcionando con las órdenes.
 
 ### Íconos y fotos de productos
 

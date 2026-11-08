@@ -89,6 +89,58 @@ async function main() {
   const unknown = await ask(owner, { message: "baila salsa" });
   check("orden desconocida muestra ayuda sin ejecutar", unknown.status === 200 && !unknown.body.proposal && Array.isArray(unknown.body.bullets));
 
+  // --- Stock, avisos y deshacer ---
+  const p1 = (JSON.parse(readFileSync(join(ROOT, "backups", "qa-accounts.json"), "utf8")).products as Record<string, string>).p1;
+  const b1 = (JSON.parse(readFileSync(join(ROOT, "backups", "qa-accounts.json"), "utf8")).branches as Record<string, string>).b1;
+
+  for (const [label, msg] of [["stock bajo", "stock bajo"], ["por vencer", "por vencer"], ["ventas de la semana", "ventas de la semana"]] as const) {
+    const r = await ask(owner, { message: msg });
+    check(`consulta «${label}» responde desde la base`, r.status === 200 && !r.body.proposal && !r.body.unknown && typeof r.body.reply === "string", JSON.stringify(r.body).slice(0, 160));
+  }
+
+  const qty = await ask(owner, { message: "cuanto hay de qa prueba venta" });
+  check("consulta de existencias de un producto", qty.status === 200 && Array.isArray(qty.body.bullets) && /disponibles/.test((qty.body.bullets as string[]).join(" ")), JSON.stringify(qty.body).slice(0, 200));
+
+  const before = await db.query<{ minimum: string | null; reorder: string | null }>(
+    `SELECT minimum_stock::text AS minimum, reorder_point::text AS reorder FROM farmacia.inventory_stock WHERE branch_id = $1 AND product_id = $2`, [b1, p1]);
+  const minProposal = await ask(owner, { message: "pon el minimo de qa prueba venta a 7 en villa mella" });
+  const mp = minProposal.body.proposal as { action: string; params: Record<string, unknown> } | undefined;
+  const minDone = await ask(owner, { execute: mp });
+  const afterMin = await db.query<{ minimum: string; reorder: string }>(
+    `SELECT minimum_stock::text AS minimum, reorder_point::text AS reorder FROM farmacia.inventory_stock WHERE branch_id = $1 AND product_id = $2`, [b1, p1]);
+  check("fija mínimo y punto de reposición en la base", mp?.action === "set_stock_levels" && minDone.status === 200 && Number(afterMin.rows[0]?.minimum) === 7 && Number(afterMin.rows[0]?.reorder) === 7, JSON.stringify(minDone.body));
+
+  const lowNow = await ask(owner, { message: "stock bajo" });
+  check("el producto bajo su mínimo aparece en «stock bajo»", /QA PRUEBA VENTA/.test(JSON.stringify(lowNow.body)), JSON.stringify(lowNow.body).slice(0, 200));
+
+  const undoProposal = await ask(owner, { message: "deshacer" });
+  const up = undoProposal.body.proposal as { action: string; params: Record<string, unknown>; summary: string[] } | undefined;
+  const undone = await ask(owner, { execute: up });
+  const restored = await db.query<{ minimum: string | null; reorder: string | null }>(
+    `SELECT minimum_stock::text AS minimum, reorder_point::text AS reorder FROM farmacia.inventory_stock WHERE branch_id = $1 AND product_id = $2`, [b1, p1]);
+  check("deshacer restaura el mínimo anterior exacto", up?.action === "undo" && /Mínimo/.test(up.summary.join(" ")) && undone.status === 200 && restored.rows[0]?.minimum === before.rows[0]?.minimum && restored.rows[0]?.reorder === before.rows[0]?.reorder, JSON.stringify({ before: before.rows[0], restored: restored.rows[0] }));
+
+  const undoTwice = await ask(owner, { execute: up });
+  check("no se puede deshacer dos veces la misma acción -> 409", undoTwice.status === 409, String(undoTwice.status));
+
+  const priceBefore = await db.query<{ sale_price: string }>(
+    `SELECT sale_price::text FROM farmacia.product_branch_prices WHERE product_id = $1 AND branch_id = $2 AND effective_until IS NULL`, [p1, b1]);
+  const priceProp = await ask(owner, { message: "pon el precio de qa prueba venta a 133 en villa mella" });
+  await ask(owner, { execute: priceProp.body.proposal });
+  const priceMid = await db.query<{ sale_price: string }>(
+    `SELECT sale_price::text FROM farmacia.product_branch_prices WHERE product_id = $1 AND branch_id = $2 AND effective_until IS NULL`, [p1, b1]);
+  const priceUndo = await ask(owner, { message: "deshacer" });
+  await ask(owner, { execute: priceUndo.body.proposal });
+  const priceAfter = await db.query<{ sale_price: string }>(
+    `SELECT sale_price::text FROM farmacia.product_branch_prices WHERE product_id = $1 AND branch_id = $2 AND effective_until IS NULL`, [p1, b1]);
+  check("precio cambia y deshacer restaura el precio anterior", Number(priceMid.rows[0]?.sale_price) === 133 && priceAfter.rows[0]?.sale_price === priceBefore.rows[0]?.sale_price && priceAfter.rows.length === 1, JSON.stringify({ before: priceBefore.rows, mid: priceMid.rows, after: priceAfter.rows }));
+
+  const otherUndo = await ask(seller, { message: "deshacer" });
+  check("un vendedor no puede usar ni deshacer el asistente -> 403", otherUndo.status === 403, String(otherUndo.status));
+
+  const free = await ask(owner, { message: "oye necesito que me digas que productos hay que pedir" });
+  check("frase libre: con IA traduce, sin IA responde ayuda sin romperse", free.status === 200, JSON.stringify(free.body).slice(0, 200));
+
   const audit = await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM farmacia.audit_logs WHERE new_values->>'via' = 'asistente_dueno' AND created_at > NOW() - interval '10 minutes'`);
   check("acciones del asistente quedan auditadas", audit.rows[0].n >= 2, String(audit.rows[0].n));
 

@@ -10,15 +10,27 @@ type Message =
 
 const SUGGESTIONS = [
   "avisos",
+  "stock bajo",
+  "por vencer",
+  "ventas de la semana",
+  "deshacer",
   "crea un vendedor llamado Ana Gómez",
   "agrega el medicamento Amoxil forma cápsula concentración 500 mg unidad caja",
   "pon el precio de amoxil a 150",
   "ayuda",
 ];
 
-export default function OwnerAssistant({ firstName }: { firstName: string }) {
+export default function OwnerAssistant({
+  firstName,
+  initialReply,
+  initialBullets,
+}: {
+  firstName: string;
+  initialReply: string;
+  initialBullets: string[];
+}) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "bot", text: `Hola, ${firstName}. Escribe «avisos» para ver el resumen del negocio o «ayuda» para ver lo que puedo hacer.` },
+    { role: "bot", text: `Hola, ${firstName}. ${initialReply}`, bullets: initialBullets },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +58,12 @@ export default function OwnerAssistant({ firstName }: { firstName: string }) {
     setMessages((current) => [
       ...current,
       ok
-        ? { role: "bot", text: String(data.reply), bullets: data.bullets as string[] | undefined, proposal: data.proposal as Proposal | undefined }
+        ? {
+            role: "bot",
+            text: data.understoodAs ? `Entendí: «${String(data.understoodAs)}». ${String(data.reply)}` : String(data.reply),
+            bullets: data.bullets as string[] | undefined,
+            proposal: data.proposal as Proposal | undefined,
+          }
         : { role: "bot", text: String(data.error ?? "No fue posible responder.") },
     ]);
     setBusy(false);

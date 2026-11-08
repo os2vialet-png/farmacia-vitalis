@@ -10,6 +10,29 @@ import { writeAudit } from "@/src/lib/audit";
 import { BusinessError } from "@/src/lib/errors";
 import { createCatalogProduct, normalizeProductName } from "@/src/lib/catalog-create";
 import { centsToDecimal, toCents } from "@/src/lib/pos-math";
+import { llmEnabled, translateToCommand } from "@/src/lib/llm-intent";
+import type { PoolClient } from "pg";
+
+/** Cómo revertir una acción ya ejecutada. */
+type UndoPayload =
+  | { type: "deactivate_user"; userId: string }
+  | { type: "reactivate_user"; userId: string }
+  | { type: "deactivate_product"; productId: string }
+  | { type: "restore_price"; productId: string; branchId: string; previousPrice: string | null }
+  | { type: "restore_setting"; key: string; previous: string | null }
+  | {
+      type: "restore_stock_levels";
+      productId: string;
+      branchId: string;
+      previous: { minimum: string | null; reorder: string | null; maximum: string | null } | null;
+    };
+
+async function recordAction(client: PoolClient, userId: string, action: string, summary: string, undo: UndoPayload) {
+  await client.query(
+    `INSERT INTO farmacia.owner_assistant_actions (user_id, action, summary, undo) VALUES ($1, $2, $3, $4::jsonb)`,
+    [userId, action, summary, JSON.stringify(undo)],
+  );
+}
 
 /**
  * Asistente del dueño. Interpreta órdenes en español con reglas (sin servicios externos),
@@ -22,7 +45,9 @@ export type ProposalAction =
   | "deactivate_employee"
   | "create_product"
   | "set_price"
-  | "update_setting";
+  | "update_setting"
+  | "set_stock_levels"
+  | "undo";
 
 export type Proposal = { action: ProposalAction; params: Record<string, unknown>; summary: string[] };
 
@@ -30,6 +55,10 @@ export type AssistantReply = {
   reply: string;
   proposal?: Proposal;
   bullets?: string[];
+  /** Verdadero cuando las reglas no reconocieron la orden. */
+  unknown?: boolean;
+  /** Orden canónica que produjo la IA local, si se usó. */
+  understoodAs?: string;
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -56,6 +85,9 @@ function lower(text: string): string {
 
 const HELP = [
   "«avisos» — resumen: stock bajo, vencimientos, transferencias, productos sin verificar o sin precio, ventas de hoy.",
+  "«stock bajo» · «por vencer» · «ventas de la semana» · «cuánto hay de amoxil»",
+  "«pon el mínimo de amoxil a 20 en Villa Mella» — punto de reposición para las alertas.",
+  "«deshacer» — revierte la última acción que hiciste con el asistente.",
   "«crea un vendedor llamado Ana Gómez en Villa Mella» (roles: vendedor, farmacéutico, encargado de inventario, administrador; opcional «usuario agomez»).",
   "«desactiva al usuario agomez»",
   "«agrega el medicamento Amoxil forma cápsula concentración 500 mg presentación caja x 21 unidad caja marca GSK»",
@@ -125,16 +157,185 @@ function productFields(text: string): Record<string, string> {
   return fields;
 }
 
-/** Interpreta un mensaje y devuelve una respuesta o una propuesta a confirmar. */
+/**
+ * Interpreta un mensaje. Primero con reglas; si no las reconoce y hay IA local configurada,
+ * la IA traduce la frase a una orden canónica que vuelve a pasar por las mismas reglas.
+ */
 export async function interpret(session: AuthSession, message: string): Promise<AssistantReply> {
+  const direct = await interpretRules(session, message);
+  if (!direct.unknown || !llmEnabled()) return direct;
+
+  const command = await translateToCommand(message);
+  if (!command) return direct;
+
+  const translated = await interpretRules(session, command);
+  if (translated.unknown) return direct;
+  return { ...translated, understoodAs: command };
+}
+
+type ProductMatch = { chosen: { id: string; product_name: string } | null; candidates: string[] };
+
+/** Busca un producto activo por nombre; elige solo si no hay ambigüedad. */
+async function findProduct(rawTerm: string): Promise<ProductMatch> {
+  const term = normalizeProductName(rawTerm);
+  if (term.length < 2) return { chosen: null, candidates: [] };
+  const products = await db.query<{ id: string; product_name: string; normalized_name: string }>(
+    `SELECT id, product_name, normalized_name FROM farmacia.catalog_products
+     WHERE is_active = TRUE AND normalized_name LIKE '%' || $1 || '%'
+     ORDER BY (normalized_name = $1) DESC, length(normalized_name)
+     LIMIT 6`,
+    [term],
+  );
+  const exact = products.rows.filter((row) => row.normalized_name === term);
+  const chosen = exact.length === 1 ? exact[0] : products.rows.length === 1 ? products.rows[0] : null;
+  return { chosen, candidates: products.rows.map((row) => row.product_name) };
+}
+
+async function scopeBranchIds(session: AuthSession): Promise<string[]> {
+  return isOwner(session)
+    ? (await branchesFor(session)).map((branch) => branch.id)
+    : accessibleBranchIds(session, "reports.view");
+}
+
+const fmt = (value: string | number) => Number(value).toLocaleString("es-DO", { maximumFractionDigits: 2 });
+
+async function interpretRules(session: AuthSession, message: string): Promise<AssistantReply> {
   const text = lower(message);
 
   if (!text || /^(ayuda|help|hola|que puedes|comandos|menu)/.test(text)) {
     return { reply: "Puedo ayudarte con estas tareas. Siempre te pido confirmación antes de cambiar algo:", bullets: HELP };
   }
 
-  if (/\b(aviso|avisos|alerta|alertas|resumen|pendientes|como va|como esta|que hay)\b/.test(text)) {
+  if (/\b(aviso|avisos|alerta|alertas|resumen|pendientes|como va|como esta)\b/.test(text)) {
     return alertsSummary(session);
+  }
+
+  // Deshacer la última acción del asistente.
+  if (/^(deshacer|deshaz|revertir|revierte|anula lo ultimo|deshacer lo ultimo|undo)\b/.test(text)) {
+    const last = await db.query<{ id: string; summary: string; created_at: string }>(
+      `SELECT id, summary, to_char(created_at AT TIME ZONE 'America/Santo_Domingo', 'DD/MM HH24:MI') AS created_at
+       FROM farmacia.owner_assistant_actions
+       WHERE user_id = $1 AND undone_at IS NULL AND created_at > NOW() - interval '7 days'
+       ORDER BY created_at DESC LIMIT 1`,
+      [session.user.id],
+    );
+    if (last.rows.length === 0) return { reply: "No tienes acciones recientes del asistente para deshacer." };
+    return {
+      reply: "Esto es lo que revertiré:",
+      proposal: {
+        action: "undo",
+        params: { actionId: Number(last.rows[0].id) },
+        summary: [`Deshacer: ${last.rows[0].summary} (${last.rows[0].created_at}).`],
+      },
+    };
+  }
+
+  const branchIds = await scopeBranchIds(session);
+
+  // Stock bajo: productos en o bajo su punto de reposición.
+  if (/\b(stock bajo|bajo stock|reponer|reposicion|que falta|agotad)/.test(text) && !/\bminimo\b/.test(text)) {
+    const rows = await db.query<{ product_name: string; branch: string; available: string; point: string }>(
+      `SELECT p.product_name, b.name AS branch, (s.quantity_on_hand - s.quantity_reserved)::text AS available,
+              COALESCE(s.reorder_point, s.minimum_stock, 0)::text AS point
+       FROM farmacia.inventory_stock s
+       JOIN farmacia.catalog_products p ON p.id = s.product_id
+       JOIN farmacia.branches b ON b.id = s.branch_id
+       WHERE s.branch_id = ANY($1::uuid[])
+         AND ((s.reorder_point IS NOT NULL OR s.minimum_stock IS NOT NULL)
+              AND s.quantity_on_hand - s.quantity_reserved <= COALESCE(s.reorder_point, s.minimum_stock)
+              OR s.quantity_on_hand - s.quantity_reserved <= 0)
+       ORDER BY (s.quantity_on_hand - s.quantity_reserved) ASC, p.product_name
+       LIMIT 20`,
+      [branchIds],
+    );
+    if (rows.rows.length === 0) return { reply: "No hay productos agotados ni bajo su punto de reposición. Configura mínimos con «pon el mínimo de … a …»." };
+    return {
+      reply: `Productos para reponer (${rows.rows.length}):`,
+      bullets: rows.rows.map((row) => `${row.product_name} — ${row.branch}: disponible ${fmt(row.available)}${Number(row.point) > 0 ? `, mínimo ${fmt(row.point)}` : ""}`),
+    };
+  }
+
+  // Lotes por vencer en 60 días o vencidos con existencia.
+  if (/\b(por vencer|vencen|vencimiento|vencimientos|vencidos|caducan)\b/.test(text)) {
+    const rows = await db.query<{ product_name: string; branch: string; lot: string | null; exp: string; days: number; qty: string }>(
+      `SELECT p.product_name, b.name AS branch, l.lot_number AS lot, to_char(l.expiration_date, 'DD/MM/YYYY') AS exp,
+              (l.expiration_date - CURRENT_DATE)::int AS days, l.quantity_remaining::text AS qty
+       FROM farmacia.inventory_lots l
+       JOIN farmacia.catalog_products p ON p.id = l.product_id
+       JOIN farmacia.branches b ON b.id = l.branch_id
+       WHERE l.branch_id = ANY($1::uuid[]) AND l.quantity_remaining > 0 AND l.status <> 'depleted'
+         AND l.expiration_date <= CURRENT_DATE + 60
+       ORDER BY l.expiration_date LIMIT 20`,
+      [branchIds],
+    );
+    if (rows.rows.length === 0) return { reply: "Ningún lote con existencia vence en los próximos 60 días." };
+    return {
+      reply: "Lotes vencidos o por vencer (60 días):",
+      bullets: rows.rows.map((row) => `${row.days < 0 ? "⛔ VENCIDO" : `vence en ${row.days} día(s)`} — ${row.product_name}, lote ${row.lot ?? "s/n"} (${row.exp}), ${row.branch}: ${fmt(row.qty)} unidades`),
+    };
+  }
+
+  // Ventas de hoy o de la semana, por sucursal.
+  if (/\bventas?\b/.test(text) && /\b(hoy|semana|mes)\b/.test(text)) {
+    const days = /\bmes\b/.test(text) ? 30 : /\bsemana\b/.test(text) ? 7 : 1;
+    const rows = await db.query<{ branch: string; n: number; total: string }>(
+      `SELECT b.name AS branch, COUNT(s.id)::int AS n, COALESCE(SUM(s.total), 0)::text AS total
+       FROM farmacia.branches b
+       LEFT JOIN farmacia.sales s ON s.branch_id = b.id AND s.status = 'completed'
+         AND s.created_at >= ((now() AT TIME ZONE 'America/Santo_Domingo')::date - ($2::int - 1))::timestamp AT TIME ZONE 'America/Santo_Domingo'
+       WHERE b.id = ANY($1::uuid[])
+       GROUP BY b.name ORDER BY b.name`,
+      [branchIds, days],
+    );
+    const total = rows.rows.reduce((sum, row) => sum + Number(row.total), 0);
+    return {
+      reply: `Ventas ${days === 1 ? "de hoy" : `de los últimos ${days} días`}: RD$ ${total.toFixed(2)}`,
+      bullets: rows.rows.map((row) => `${row.branch}: ${row.n} venta(s), RD$ ${Number(row.total).toFixed(2)}`),
+    };
+  }
+
+  // Fijar mínimo / punto de reposición.
+  const minimum = /\b(?:minimo|punto de reposicion|reorden)\s+(?:de\s+|del\s+|para\s+)?(.+?)\s+(?:a|en|=)\s+(\d{1,6})(?:\s+(?:unidades\s+)?(?:en\s+)?(?:la\s+)?(?:sucursal\s+)?(.+))?$/.exec(text);
+  if (minimum) {
+    const match = await findProduct(minimum[1]);
+    if (!match.chosen) {
+      return match.candidates.length === 0
+        ? { reply: `No encontré un producto activo que coincida con «${minimum[1]}».` }
+        : { reply: "Encontré varios productos. Escribe el nombre exacto de uno:", bullets: match.candidates };
+    }
+    const branches = await branchesFor(session);
+    const branch = matchBranch(branches, minimum[3] ?? null);
+    if (!branch || branch === "ambiguous") return { reply: `¿En qué sucursal? Opciones: ${branches.map((item) => item.name).join(", ")}.` };
+    const quantity = Number(minimum[2]);
+    return {
+      reply: "Esto es lo que haré:",
+      proposal: {
+        action: "set_stock_levels",
+        params: { productId: match.chosen.id, branchId: branch.id, minimum: quantity },
+        summary: [`Fijar el mínimo y punto de reposición de ${match.chosen.product_name} en ${quantity} unidades en ${branch.name}.`, "Cuando el disponible llegue a ese número, aparecerá en «avisos» y «stock bajo»."],
+      },
+    };
+  }
+
+  // Consulta de existencias de un producto (uso interno: muestra cantidades).
+  const stockQuery = /^(?:cuanto|cuantos|cuantas|cuanta|que)\s+(?:hay|queda|quedan|tenemos|existencia)\s+(?:de\s+|del\s+)?(.+?)\??$/.exec(text)
+    ?? /^(?:stock|existencias?|inventario)\s+(?:de\s+|del\s+)(.+?)\??$/.exec(text);
+  if (stockQuery) {
+    const term = normalizeProductName(stockQuery[1]);
+    const rows = await db.query<{ product_name: string; branch: string; available: string }>(
+      `SELECT p.product_name, b.name AS branch, (s.quantity_on_hand - s.quantity_reserved)::text AS available
+       FROM farmacia.inventory_stock s
+       JOIN farmacia.catalog_products p ON p.id = s.product_id
+       JOIN farmacia.branches b ON b.id = s.branch_id
+       WHERE s.branch_id = ANY($1::uuid[]) AND p.normalized_name LIKE '%' || $2 || '%'
+       ORDER BY p.product_name, b.name LIMIT 20`,
+      [branchIds, term],
+    );
+    if (rows.rows.length === 0) return { reply: `No hay existencias registradas de «${stockQuery[1]}» en tus sucursales.` };
+    return {
+      reply: `Existencias de «${stockQuery[1]}»:`,
+      bullets: rows.rows.map((row) => `${row.product_name} — ${row.branch}: ${fmt(row.available)} disponibles`),
+    };
   }
 
   // Desactivar empleado.
@@ -282,7 +483,7 @@ export async function interpret(session: AuthSession, message: string): Promise<
     };
   }
 
-  return { reply: "No entendí la orden. Estas son las tareas que puedo hacer:", bullets: HELP };
+  return { reply: "No entendí la orden. Estas son las tareas que puedo hacer:", bullets: HELP, unknown: true };
 }
 
 /** Resumen de avisos del negocio en las sucursales que la sesión puede ver. */
@@ -361,6 +562,11 @@ const executeSchema = z.discriminatedUnion("action", [
     action: z.literal("update_setting"),
     params: z.object({ key: z.enum(["pharmacy_name", "receipt_footer", "clinical_referral_text"]), value: z.string().trim().min(1).max(500) }),
   }),
+  z.object({
+    action: z.literal("set_stock_levels"),
+    params: z.object({ productId: z.string().uuid(), branchId: z.string().uuid(), minimum: z.number().int().min(0).max(1000000) }),
+  }),
+  z.object({ action: z.literal("undo"), params: z.object({ actionId: z.number().int().positive() }) }),
 ]);
 
 /** Ejecuta una propuesta confirmada. Revalida datos y permisos. */
@@ -381,6 +587,9 @@ export async function execute(session: AuthSession, raw: unknown, ip: string | n
   }
   if (command.action === "update_setting" && !hasPermission(session, "settings.manage")) {
     throw new BusinessError("Solo el propietario puede cambiar la configuración.", 403);
+  }
+  if (command.action === "set_stock_levels" && !(await canOperateBranch(session, "inventory.manage", command.params.branchId))) {
+    throw new BusinessError("No tienes permiso para configurar inventario en esa sucursal.", 403);
   }
 
   // El hash es costoso: se calcula fuera de la transacción.
@@ -413,6 +622,7 @@ export async function execute(session: AuthSession, raw: unknown, ip: string | n
           actorUserId: actor, branchId: p.branchId, action: "create", entity: "user", entityId: user.rows[0].id,
           newValues: { username: p.username, role: p.roleCode, via: "asistente_dueno" }, ip,
         });
+        await recordAction(client, actor, "create_employee", `Crear al empleado ${p.username}`, { type: "deactivate_user", userId: user.rows[0].id });
         message = `Empleado ${p.firstName} ${p.lastName} creado con el usuario ${p.username}. Entrega la contraseña temporal en persona.`;
         break;
       }
@@ -433,11 +643,13 @@ export async function execute(session: AuthSession, raw: unknown, ip: string | n
           actorUserId: actor, action: "user.deactivate", entity: "user", entityId: command.params.userId,
           newValues: { isActive: false, username: target.rows[0].username, via: "asistente_dueno" }, ip,
         });
+        await recordAction(client, actor, "deactivate_employee", `Desactivar al usuario ${target.rows[0].username}`, { type: "reactivate_user", userId: command.params.userId });
         message = `Usuario ${target.rows[0].username} desactivado y sus sesiones cerradas.`;
         break;
       }
       case "create_product": {
         const product = await createCatalogProduct(client, command.params, actor, ip);
+        await recordAction(client, actor, "create_product", `Crear el producto ${product.productName}`, { type: "deactivate_product", productId: product.id });
         message = `Producto ${product.productName} creado (pendiente de verificación).`;
         break;
       }
@@ -462,6 +674,7 @@ export async function execute(session: AuthSession, raw: unknown, ip: string | n
           actorUserId: actor, branchId: p.branchId, action: "catalog.price_change", entity: "catalog_product", entityId: p.productId,
           oldValues: { salePrice: previous.rows[0]?.sale_price ?? null }, newValues: { salePrice: priceText, via: "asistente_dueno" }, ip,
         });
+        await recordAction(client, actor, "set_price", `Precio de ${product.rows[0].product_name} a RD$ ${priceText}`, { type: "restore_price", productId: p.productId, branchId: p.branchId, previousPrice: previous.rows[0]?.sale_price ?? null });
         message = `Precio de ${product.rows[0].product_name}: RD$ ${priceText}.`;
         break;
       }
@@ -473,7 +686,110 @@ export async function execute(session: AuthSession, raw: unknown, ip: string | n
           actorUserId: actor, action: "settings.update", entity: "app_setting",
           oldValues: { key: p.key, value: current.rows[0]?.value ?? null }, newValues: { key: p.key, value: p.value, via: "asistente_dueno" }, ip,
         });
+        await recordAction(client, actor, "update_setting", `Cambiar «${SETTING_LABELS[p.key]}»`, { type: "restore_setting", key: p.key, previous: current.rows[0]?.value ?? null });
         message = `«${SETTING_LABELS[p.key]}» actualizado.`;
+        break;
+      }
+      case "set_stock_levels": {
+        const p = command.params;
+        const product = await client.query<{ product_name: string }>(
+          `SELECT product_name FROM farmacia.catalog_products WHERE id = $1 FOR SHARE`, [p.productId]);
+        if (product.rows.length === 0) throw new BusinessError("El producto no existe.", 404);
+        const current = await client.query<{ minimum: string | null; reorder: string | null; maximum: string | null }>(
+          `SELECT minimum_stock::text AS minimum, reorder_point::text AS reorder, maximum_stock::text AS maximum
+           FROM farmacia.inventory_stock WHERE branch_id = $1 AND product_id = $2 FOR UPDATE`,
+          [p.branchId, p.productId],
+        );
+        await client.query(
+          `INSERT INTO farmacia.inventory_stock (branch_id, product_id, quantity_on_hand, quantity_reserved, minimum_stock, reorder_point)
+           VALUES ($1, $2, 0, 0, $3, $3)
+           ON CONFLICT (branch_id, product_id) DO UPDATE SET
+             minimum_stock = EXCLUDED.minimum_stock,
+             reorder_point = EXCLUDED.reorder_point,
+             maximum_stock = CASE WHEN farmacia.inventory_stock.maximum_stock IS NOT NULL
+                                   AND farmacia.inventory_stock.maximum_stock < EXCLUDED.minimum_stock
+                                  THEN EXCLUDED.minimum_stock ELSE farmacia.inventory_stock.maximum_stock END,
+             updated_at = NOW()`,
+          [p.branchId, p.productId, p.minimum],
+        );
+        await writeAudit(client, {
+          actorUserId: actor, branchId: p.branchId, action: "inventory.levels", entity: "catalog_product", entityId: p.productId,
+          oldValues: current.rows[0] ?? null, newValues: { minimum: p.minimum, reorderPoint: p.minimum, via: "asistente_dueno" }, ip,
+        });
+        await recordAction(client, actor, "set_stock_levels", `Mínimo de ${product.rows[0].product_name} a ${p.minimum}`, {
+          type: "restore_stock_levels", productId: p.productId, branchId: p.branchId, previous: current.rows[0] ?? null,
+        });
+        message = `Mínimo de ${product.rows[0].product_name}: ${p.minimum} unidades. Aparecerá en avisos al llegar a ese nivel.`;
+        break;
+      }
+      case "undo": {
+        const row = await client.query<{ id: string; summary: string; undo: UndoPayload }>(
+          `SELECT id, summary, undo FROM farmacia.owner_assistant_actions
+           WHERE id = $1 AND user_id = $2 AND undone_at IS NULL FOR UPDATE`,
+          [command.params.actionId, actor],
+        );
+        if (row.rows.length === 0) throw new BusinessError("Esa acción ya fue revertida o no es tuya.", 409);
+        const undo = row.rows[0].undo;
+
+        if ((undo.type === "deactivate_user" || undo.type === "reactivate_user") && !isOwner(session)) {
+          throw new BusinessError("Solo el propietario puede revertir cambios de empleados.", 403);
+        }
+        if (undo.type === "restore_price" && !(await canOperateBranch(session, "catalog.prices", undo.branchId))) {
+          throw new BusinessError("No tienes permiso para fijar precios en esa sucursal.", 403);
+        }
+        if (undo.type === "restore_stock_levels" && !(await canOperateBranch(session, "inventory.manage", undo.branchId))) {
+          throw new BusinessError("No tienes permiso para configurar inventario en esa sucursal.", 403);
+        }
+
+        switch (undo.type) {
+          case "deactivate_user":
+            await client.query(`UPDATE farmacia.users SET is_active = FALSE, updated_at = NOW() WHERE id = $1`, [undo.userId]);
+            await client.query(`UPDATE farmacia.user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`, [undo.userId]);
+            break;
+          case "reactivate_user":
+            await client.query(`UPDATE farmacia.users SET is_active = TRUE, updated_at = NOW() WHERE id = $1`, [undo.userId]);
+            break;
+          case "deactivate_product":
+            await client.query(`UPDATE farmacia.catalog_products SET is_active = FALSE, updated_at = NOW() WHERE id = $1`, [undo.productId]);
+            break;
+          case "restore_price":
+            await client.query(
+              `UPDATE farmacia.product_branch_prices SET effective_until = NOW(), updated_at = NOW()
+               WHERE product_id = $1 AND branch_id = $2 AND effective_from <= NOW()
+                 AND (effective_until IS NULL OR effective_until > NOW())`,
+              [undo.productId, undo.branchId],
+            );
+            if (undo.previousPrice !== null) {
+              await client.query(
+                `INSERT INTO farmacia.product_branch_prices (product_id, branch_id, sale_price, effective_from) VALUES ($1, $2, $3, NOW())`,
+                [undo.productId, undo.branchId, undo.previousPrice],
+              );
+            }
+            break;
+          case "restore_setting":
+            if (undo.previous !== null) {
+              await client.query(`UPDATE farmacia.app_settings SET value = $2, updated_by = $3, updated_at = NOW() WHERE key = $1`, [undo.key, undo.previous, actor]);
+            }
+            break;
+          case "restore_stock_levels":
+            await client.query(
+              `UPDATE farmacia.inventory_stock
+               SET minimum_stock = $3, reorder_point = $4, maximum_stock = $5, updated_at = NOW()
+               WHERE branch_id = $1 AND product_id = $2`,
+              [undo.branchId, undo.productId, undo.previous?.minimum ?? null, undo.previous?.reorder ?? null, undo.previous?.maximum ?? null],
+            );
+            break;
+        }
+
+        await client.query(
+          `UPDATE farmacia.owner_assistant_actions SET undone_at = NOW(), undone_by = $2 WHERE id = $1`,
+          [command.params.actionId, actor],
+        );
+        await writeAudit(client, {
+          actorUserId: actor, action: "owner_assistant.undo", entity: "owner_assistant_action",
+          newValues: { actionId: command.params.actionId, reverted: row.rows[0].summary, via: "asistente_dueno" }, ip,
+        });
+        message = `Revertido: ${row.rows[0].summary}.`;
         break;
       }
     }
