@@ -133,7 +133,7 @@ async function main() {
   await ask(owner, { execute: priceUndo.body.proposal });
   const priceAfter = await db.query<{ sale_price: string }>(
     `SELECT sale_price::text FROM farmacia.product_branch_prices WHERE product_id = $1 AND branch_id = $2 AND effective_until IS NULL`, [p1, b1]);
-  check("precio cambia y deshacer restaura el precio anterior", Number(priceMid.rows[0]?.sale_price) === 133 && priceAfter.rows[0]?.sale_price === priceBefore.rows[0]?.sale_price && priceAfter.rows.length === 1, JSON.stringify({ before: priceBefore.rows, mid: priceMid.rows, after: priceAfter.rows }));
+  check("precio cambia y deshacer restaura el precio anterior", Number(priceMid.rows[0]?.sale_price) === 133 && JSON.stringify(priceAfter.rows) === JSON.stringify(priceBefore.rows), JSON.stringify({ before: priceBefore.rows, mid: priceMid.rows, after: priceAfter.rows }));
 
   const otherUndo = await ask(seller, { message: "deshacer" });
   check("un vendedor no puede usar ni deshacer el asistente -> 403", otherUndo.status === 403, String(otherUndo.status));

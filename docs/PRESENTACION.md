@@ -71,6 +71,16 @@ winget install Ollama.Ollama
 ollama pull qwen2.5:7b
 ```
 
+Si `ollama pull qwen2.5:7b` falla con «connection forcibly closed» (pasa en algunas redes con IPv6), descarga el mismo modelo desde Hugging Face y dale el mismo nombre:
+
+```bash
+ollama pull hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M
+```
+
+```bash
+ollama cp hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M qwen2.5:7b
+```
+
 Agrega a `.env.local` la línea `OLLAMA_MODEL=qwen2.5:7b` y reinicia la aplicación. La pantalla mostrará «IA local activa».
 
 La IA solo traduce tu frase a una de las órdenes de la tabla. Nunca toca la base de datos: la orden pasa por las mismas validaciones, permisos y confirmación. Si Ollama está apagado, el asistente sigue funcionando con las órdenes.

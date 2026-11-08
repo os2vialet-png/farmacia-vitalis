@@ -109,7 +109,7 @@ async function branchesFor(session: AuthSession): Promise<Branch[]> {
 /** Resuelve una sucursal por nombre o código, sin ambigüedad. */
 function matchBranch(branches: Branch[], term: string | null): Branch | null | "ambiguous" {
   if (!term) return branches.length === 1 ? branches[0] : null;
-  const wanted = lower(term).replace(/^(la |el )?(sucursal )?/, "");
+  const wanted = lower(term).replace(/^(de |del )?(la |el )?(sucursal )?(de |del )?/, "").trim();
   const found = branches.filter(
     (branch) => lower(branch.name).includes(wanted) || lower(branch.code) === wanted,
   );
@@ -440,7 +440,8 @@ async function interpretRules(session: AuthSession, message: string): Promise<As
   // Fijar precio.
   const price = /precio\s+(?:de\s+|del\s+|para\s+)?(.+?)\s+(?:a|en|=)\s+(?:rd\$\s*|\$\s*)?(\d+(?:[.,]\d{1,2})?)(?:\s+(?:pesos\s+)?(?:en\s+)?(?:la\s+)?(?:sucursal\s+)?(.+))?$/.exec(text);
   if (price) {
-    const term = normalizeProductName(price[1]);
+    // Quita unidades delante del nombre: «la caja del amoxil» → «amoxil».
+    const term = normalizeProductName(price[1].replace(/^(?:las+|els+)?(?:cajas?|frascos?|unidad(?:es)?|tabletas?|blister|sobres?)s+(?:de|del)s+(?:las+|els+)?/, ""));
     const amount = Number(price[2].replace(",", "."));
     const products = await db.query<{ id: string; product_name: string; normalized_name: string }>(
       `SELECT id, product_name, normalized_name FROM farmacia.catalog_products

@@ -27,6 +27,7 @@ Convierte el mensaje del dueño en UNA sola orden con exactamente uno de estos f
 - pon el minimo de <producto> a <cantidad> en <sucursal>
 - cambia el pie del comprobante a <texto>
 - cambia el nombre de la farmacia a <texto>
+<producto> es solo el nombre del producto, sin palabras como caja, frasco, unidad o tableta delante. <sucursal> es solo su nombre, sin "sucursal de".
 Omite las partes que el mensaje no diga (no inventes nombres, montos ni sucursales).
 Si el mensaje no corresponde a ninguna orden, usa "ninguna".
 Responde solo JSON: {"orden": "..."}`;
@@ -45,11 +46,13 @@ export async function translateToCommand(message: string): Promise<string | null
     const response = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(45_000),
       body: JSON.stringify({
         model,
         stream: false,
         format: "json",
+        // Mantiene el modelo en memoria entre consultas (la primera carga tarda ~10 s).
+        keep_alive: "30m",
         options: { temperature: 0 },
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
