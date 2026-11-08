@@ -77,3 +77,7 @@ npm run qa:teardown
 ## Datos de prueba
 
 Ver [MANTENIMIENTO.md](MANTENIMIENTO.md#datos-de-prueba-qa). `qa:setup` limpia los registros `login_failed` QA de corridas anteriores, por lo que las suites se pueden repetir sin quedarse sin intentos de login. Tras `qa:teardown`, las cuentas y productos QA quedan desactivados y sesiones revocadas; si además se pasa `--purge --confirm`, se borran también ventas, compras, transferencias, movimientos y precios de QA. Al cerrar el entrega, la purga ya se ejecutó (ver [ESTADO.md](ESTADO.md)).
+
+## Agente de IA del asistente del dueño
+
+`npx tsx scripts/qa/owner-agent-check.ts` — 30 pruebas de las 24 herramientas con una IA simulada (sin clave ni cuota). El servidor 3100 debe iniciarse con `AI_API_KEY=simulada AI_BASE_URL=http://127.0.0.1:4599/v1`. Resultado del 08/11/2026: 30/30. En la misma fecha: API 143/143, asistente 26/26, páginas 44/44, unitarias 12/12.

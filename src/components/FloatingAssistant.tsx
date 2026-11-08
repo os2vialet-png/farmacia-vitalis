@@ -10,7 +10,7 @@ type Greeting = { reply: string; bullets: string[] };
  * Botón flotante (abajo a la derecha) que abre el asistente del dueño en un panel.
  * Al abrirlo por primera vez carga los avisos del negocio.
  */
-export default function FloatingAssistant({ firstName }: { firstName: string }) {
+export default function FloatingAssistant({ firstName, voiceEnabled = false }: { firstName: string; voiceEnabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [greeting, setGreeting] = useState<Greeting | null>(null);
@@ -64,7 +64,7 @@ export default function FloatingAssistant({ firstName }: { firstName: string }) 
           {loading || !greeting ? (
             <p className="p-6 text-sm text-gray-500">Revisando el negocio…</p>
           ) : (
-            <OwnerAssistant firstName={firstName} initialReply={greeting.reply} initialBullets={greeting.bullets} compact />
+            <OwnerAssistant firstName={firstName} initialReply={greeting.reply} initialBullets={greeting.bullets} compact voiceEnabled={voiceEnabled} />
           )}
         </div>
       )}

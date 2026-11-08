@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
 import { db } from "@/src/lib/db";
 import { authorize, authorizationMessage, authorizationStatus } from "@/src/lib/auth/permissions";
 import { writeAudit } from "@/src/lib/audit";
 import { clientIp, jsonError } from "@/src/lib/http";
 
 type Context = { params: Promise<{ id: string }> };
-
-const UPLOAD_DIR = resolve(process.cwd(), "public", "uploads", "productos");
 
 const ALLOWED_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -29,7 +25,29 @@ const imagePayloadSchema = z.object({
  * Foto del producto: subida de un archivo real o una dirección del fabricante.
  * `POST` (multipart `image`), `PUT` JSON con `imageUrl`, `DELETE` para quitarla.
  * La imagen nunca se genera ni se inventa; es una foto que el personal carga.
+ * Las fotos subidas se guardan en la base (farmacia.product_image_files) y se sirven con `GET`,
+ * así no se pierden cuando el servidor se reinstala.
  */
+
+/** Sirve la foto subida de un producto. */
+export async function GET(_request: NextRequest, context: Context) {
+  const { id } = await context.params;
+  if (!z.string().uuid().safeParse(id).success) return new NextResponse(null, { status: 404 });
+  const result = await db.query<{ content_type: string; data: Buffer }>(
+    `SELECT content_type, data FROM farmacia.product_image_files WHERE product_id = $1`,
+    [id],
+  );
+  const image = result.rows[0];
+  if (!image) return new NextResponse(null, { status: 404 });
+  return new NextResponse(new Uint8Array(image.data), {
+    headers: {
+      "Content-Type": image.content_type,
+      // La dirección cambia (?v=) con cada foto nueva: se puede guardar en caché.
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
 
 async function readOldImage(id: string): Promise<string | null> {
   const client = await db.connect();
@@ -44,13 +62,6 @@ async function readOldImage(id: string): Promise<string | null> {
   }
 }
 
-async function removeLocalUpload(url: string | null): Promise<void> {
-  if (!url || !url.startsWith("/uploads/productos/")) return;
-  const file = basename(url);
-  if (!file || file.includes("/")) return;
-  await unlink(join(UPLOAD_DIR, file)).catch(() => undefined);
-}
-
 async function applyImage(
   productId: string,
   nextImage: string | null,
@@ -58,6 +69,7 @@ async function applyImage(
   action: string,
   details: Record<string, unknown>,
   ip: string | null,
+  upload?: { contentType: string; bytes: Buffer },
 ): Promise<NextResponse> {
   const client = await db.connect();
   try {
@@ -71,6 +83,16 @@ async function applyImage(
       return jsonError("El producto no existe.", 404);
     }
     const previous = current.rows[0].image_url;
+    if (upload) {
+      await client.query(
+        `INSERT INTO farmacia.product_image_files (product_id, content_type, data, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (product_id) DO UPDATE SET content_type = EXCLUDED.content_type, data = EXCLUDED.data, updated_at = NOW()`,
+        [productId, upload.contentType, upload.bytes],
+      );
+    } else {
+      await client.query(`DELETE FROM farmacia.product_image_files WHERE product_id = $1`, [productId]);
+    }
     await client.query(
       `UPDATE farmacia.catalog_products SET image_url = $2, updated_at = NOW() WHERE id = $1`,
       [productId, nextImage],
@@ -85,8 +107,6 @@ async function applyImage(
       ip,
     });
     await client.query("COMMIT");
-    client.release();
-    await removeLocalUpload(previous);
     return NextResponse.json({ success: true, imageUrl: nextImage });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -114,8 +134,7 @@ export async function POST(request: NextRequest, context: Context) {
       return jsonError("Adjunta la foto del producto.", 400);
     }
     // `type` y `name` vienen del cliente: solo se confía en ellos tras validarlos aquí.
-    const extension = ALLOWED_TYPES[file.type];
-    if (!extension) {
+    if (!ALLOWED_TYPES[file.type]) {
       return jsonError("Formato de imagen no admitido. Usa JPG, PNG o WEBP.", 415);
     }
     if (file.size <= 0 || file.size > 3 * 1024 * 1024) {
@@ -127,17 +146,14 @@ export async function POST(request: NextRequest, context: Context) {
       return jsonError("La imagen llegó incompleta. Intenta de nuevo.", 400);
     }
 
-    await mkdir(UPLOAD_DIR, { recursive: true });
-    const fileName = `${id}-${Date.now()}.${extension}`;
-    await writeFile(join(UPLOAD_DIR, fileName), bytes);
-
     return await applyImage(
       id,
-      `/uploads/productos/${fileName}`,
+      `/api/catalog/${id}/image?v=${Date.now()}`,
       access.session.user.id,
       "catalog.image_update",
-      { origin: "upload" },
+      { origin: "upload", bytes: bytes.length },
       clientIp(request),
+      { contentType: file.type, bytes },
     );
   } catch (error) {
     console.error("Error subiendo imagen de producto:", error);

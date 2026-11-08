@@ -3,7 +3,7 @@
 
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { PharmacyCross } from "@/src/components/AppShell";
+import { PharmacyCross } from "@/src/components/PharmacyCross";
 
 export default function LoginPage() {
   const router = useRouter();

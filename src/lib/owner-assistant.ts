@@ -11,6 +11,7 @@ import { BusinessError } from "@/src/lib/errors";
 import { createCatalogProduct, normalizeProductName } from "@/src/lib/catalog-create";
 import { centsToDecimal, toCents } from "@/src/lib/pos-math";
 import { llmEnabled, translateToCommand } from "@/src/lib/llm-intent";
+import { cloudAiEnabled } from "@/src/lib/ai-client";
 import type { PoolClient } from "pg";
 
 /** Cómo revertir una acción ya ejecutada. */
@@ -49,7 +50,16 @@ export type ProposalAction =
   | "set_stock_levels"
   | "undo";
 
-export type Proposal = { action: ProposalAction; params: Record<string, unknown>; summary: string[] };
+/**
+ * Propuesta pendiente de confirmación. Si trae `request`, al confirmar el navegador llama a esa
+ * API del sistema con la sesión del usuario (mismos permisos y validaciones que los botones).
+ */
+export type Proposal = {
+  action: ProposalAction | "api_request";
+  params: Record<string, unknown>;
+  summary: string[];
+  request?: { method: "POST"; path: string; body: Record<string, unknown> | null; successText: string };
+};
 
 export type AssistantReply = {
   reply: string;
@@ -59,16 +69,18 @@ export type AssistantReply = {
   unknown?: boolean;
   /** Orden canónica que produjo la IA local, si se usó. */
   understoodAs?: string;
+  /** Pantalla que el navegador debe abrir. */
+  navigate?: string;
 };
 
-const ROLE_LABELS: Record<string, string> = {
+export const ROLE_LABELS: Record<string, string> = {
   admin: "Administrador",
   pharmacist: "Farmacéutico",
   inventory_manager: "Encargado de inventario",
   seller: "Vendedor",
 };
 
-const SETTING_LABELS: Record<string, string> = {
+export const SETTING_LABELS: Record<string, string> = {
   pharmacy_name: "Nombre de la farmacia",
   receipt_footer: "Pie del comprobante",
   clinical_referral_text: "Texto de derivación clínica",
@@ -79,7 +91,7 @@ function plain(text: string): string {
   return text.normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
-function lower(text: string): string {
+export function lower(text: string): string {
   return plain(text).toLowerCase().replace(/\s+/g, " ").trim();
 }
 
@@ -95,9 +107,9 @@ const HELP = [
   "«cambia el pie del comprobante a Gracias por preferirnos» (también: nombre de la farmacia, derivación clínica)",
 ];
 
-type Branch = { id: string; name: string; code: string };
+export type Branch = { id: string; name: string; code: string };
 
-async function branchesFor(session: AuthSession): Promise<Branch[]> {
+export async function branchesFor(session: AuthSession): Promise<Branch[]> {
   const result = await db.query<Branch>(
     `SELECT id, name, code FROM farmacia.branches WHERE is_active = TRUE ORDER BY name`,
   );
@@ -107,7 +119,7 @@ async function branchesFor(session: AuthSession): Promise<Branch[]> {
 }
 
 /** Resuelve una sucursal por nombre o código, sin ambigüedad. */
-function matchBranch(branches: Branch[], term: string | null): Branch | null | "ambiguous" {
+export function matchBranch(branches: Branch[], term: string | null): Branch | null | "ambiguous" {
   if (!term) return branches.length === 1 ? branches[0] : null;
   const wanted = lower(term).replace(/^(de |del )?(la |el )?(sucursal )?(de |del )?/, "").trim();
   const found = branches.filter(
@@ -125,7 +137,7 @@ function roleFrom(text: string): string | null {
   return null;
 }
 
-function suggestUsername(firstName: string, lastName: string): string {
+export function suggestUsername(firstName: string, lastName: string): string {
   return lower(`${firstName[0] ?? ""}${lastName.split(" ")[0] ?? ""}`).replace(/[^a-z0-9]/g, "").slice(0, 30);
 }
 
@@ -157,20 +169,36 @@ function productFields(text: string): Record<string, string> {
   return fields;
 }
 
+/** Órdenes cortas (los botones de sugerencia) que se resuelven al instante, sin IA. */
+const QUICK_COMMANDS = /^(ayuda|avisos|resumen|stock bajo|por vencer|deshacer|ventas de (hoy|la semana|el mes))$/;
+
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+
 /**
- * Interpreta un mensaje. Primero con reglas; si no las reconoce y hay IA local configurada,
- * la IA traduce la frase a una orden canónica que vuelve a pasar por las mismas reglas.
+ * Interpreta un mensaje, en este orden:
+ * 1. Botones de sugerencia → reglas (instantáneo).
+ * 2. IA en la nube configurada (AI_API_KEY) → agente con herramientas que entiende lenguaje libre
+ *    y el contexto de la conversación.
+ * 3. IA local (OLLAMA_MODEL) → traduce la frase a una orden de las reglas.
+ * 4. Reglas.
+ * Si una IA falla, se pasa a la siguiente opción; las acciones siempre piden confirmación.
  */
-export async function interpret(session: AuthSession, message: string): Promise<AssistantReply> {
+export async function interpret(session: AuthSession, message: string, history: ChatTurn[] = []): Promise<AssistantReply> {
+  if (QUICK_COMMANDS.test(lower(message))) return interpretRules(session, message);
+
+  if (cloudAiEnabled()) {
+    const { runAgent } = await import("@/src/lib/owner-agent");
+    const agent = await runAgent(session, message, history);
+    if (agent) return agent;
+  }
+
   const direct = await interpretRules(session, message);
   if (!direct.unknown || !llmEnabled()) return direct;
 
   const command = await translateToCommand(message);
   if (!command) return direct;
-
   const translated = await interpretRules(session, command);
-  if (translated.unknown) return direct;
-  return { ...translated, understoodAs: command };
+  return translated.unknown ? direct : { ...translated, understoodAs: command };
 }
 
 type ProductMatch = { chosen: { id: string; product_name: string } | null; candidates: string[] };
@@ -191,7 +219,7 @@ async function findProduct(rawTerm: string): Promise<ProductMatch> {
   return { chosen, candidates: products.rows.map((row) => row.product_name) };
 }
 
-async function scopeBranchIds(session: AuthSession): Promise<string[]> {
+export async function scopeBranchIds(session: AuthSession): Promise<string[]> {
   return isOwner(session)
     ? (await branchesFor(session)).map((branch) => branch.id)
     : accessibleBranchIds(session, "reports.view");
@@ -199,7 +227,7 @@ async function scopeBranchIds(session: AuthSession): Promise<string[]> {
 
 const fmt = (value: string | number) => Number(value).toLocaleString("es-DO", { maximumFractionDigits: 2 });
 
-async function interpretRules(session: AuthSession, message: string): Promise<AssistantReply> {
+export async function interpretRules(session: AuthSession, message: string): Promise<AssistantReply> {
   const text = lower(message);
 
   if (!text || /^(ayuda|help|hola|que puedes|comandos|menu)/.test(text)) {
@@ -327,7 +355,8 @@ async function interpretRules(session: AuthSession, message: string): Promise<As
        FROM farmacia.inventory_stock s
        JOIN farmacia.catalog_products p ON p.id = s.product_id
        JOIN farmacia.branches b ON b.id = s.branch_id
-       WHERE s.branch_id = ANY($1::uuid[]) AND p.normalized_name LIKE '%' || $2 || '%'
+       WHERE s.branch_id = ANY($1::uuid[])
+         AND (p.normalized_name LIKE '%' || $2 || '%' OR $2 OPERATOR(farmacia.<%) p.normalized_name)
        ORDER BY p.product_name, b.name LIMIT 20`,
       [branchIds, term],
     );
@@ -488,7 +517,7 @@ async function interpretRules(session: AuthSession, message: string): Promise<As
 }
 
 /** Resumen de avisos del negocio en las sucursales que la sesión puede ver. */
-async function alertsSummary(session: AuthSession): Promise<AssistantReply> {
+export async function alertsSummary(session: AuthSession): Promise<AssistantReply> {
   const branchIds = isOwner(session)
     ? (await branchesFor(session)).map((branch) => branch.id)
     : await accessibleBranchIds(session, "reports.view");

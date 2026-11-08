@@ -1,0 +1,30 @@
+/** Prueba: subir, ver y quitar una foto guardada en la base. Requiere qa:setup y servidor en 3100. */
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+const ROOT = resolve(__dirname, "..", "..");
+const BASE = "http://localhost:3100";
+const qa = JSON.parse(readFileSync(join(ROOT, "backups", "qa-accounts.json"), "utf8"));
+const pw = new Map((qa.accounts as { username: string; password: string }[]).map((a) => [a.username, a.password]));
+const productId = (qa.products as Record<string, string> | string[]) instanceof Array ? (qa.products as string[])[0] : Object.values(qa.products as Record<string, string>)[0];
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+let failed = 0;
+const check = (n: string, ok: boolean, d = "") => { if (!ok) failed++; console.log(`${ok ? "PASS" : "FAIL"} | ${n}${ok ? "" : ` | ${d}`}`); };
+(async () => {
+  const login = await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "qa_owner", password: pw.get("qa_owner") }) });
+  const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
+  const form = new FormData(); form.append("image", new Blob([png], { type: "image/png" }), "foto.png");
+  const up = await fetch(`${BASE}/api/catalog/${productId}/image`, { method: "POST", headers: { Cookie: cookie }, body: form });
+  const upBody = await up.json() as { imageUrl?: string };
+  check("sube la foto", up.status === 200 && /^\/api\/catalog\/.+\/image\?v=\d+$/.test(upBody.imageUrl ?? ""), JSON.stringify(upBody));
+  const get = await fetch(`${BASE}${upBody.imageUrl}`);
+  const bytes = Buffer.from(await get.arrayBuffer());
+  check("la foto se sirve desde la base", get.status === 200 && get.headers.get("content-type") === "image/png" && bytes.equals(png), `${get.status} ${get.headers.get("content-type")}`);
+  const del = await fetch(`${BASE}/api/catalog/${productId}/image`, { method: "DELETE", headers: { Cookie: cookie } });
+  check("quita la foto", del.status === 200, String(del.status));
+  const gone = await fetch(`${BASE}/api/catalog/${productId}/image`);
+  check("ya no se sirve", gone.status === 404, String(gone.status));
+  const anon = new FormData(); anon.append("image", new Blob([png], { type: "image/png" }), "x.png");
+  const noAuth = await fetch(`${BASE}/api/catalog/${productId}/image`, { method: "POST", body: anon });
+  check("sin sesión no se puede subir", noAuth.status === 401, String(noAuth.status));
+  process.exitCode = failed ? 1 : 0;
+})();
